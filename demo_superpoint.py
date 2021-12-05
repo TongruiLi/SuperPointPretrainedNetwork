@@ -69,6 +69,13 @@ myjet = np.array([[0.        , 0.        , 0.5       ],
                   [0.99910873, 0.07334786, 0.        ],
                   [0.5       , 0.        , 0.        ]])
 
+def sort_listing(l):
+  """
+  sort the current listing of files
+  """
+  print(l)
+  exit(0)
+  
 class SuperPointNet(torch.nn.Module):
   """ Pytorch definition of SuperPoint Network. """
   def __init__(self):
@@ -523,7 +530,9 @@ class VideoStreamer(object):
         print('==> Processing Image Directory Input.')
         search = os.path.join(basedir, img_glob)
         self.listing = glob.glob(search)
-        self.listing.sort()
+        #self.listing.sort()
+        self.listing = sort_listing(self.listing)
+
         self.listing = self.listing[::self.skip]
         self.maxlen = len(self.listing)
         if self.maxlen == 0:
@@ -667,6 +676,13 @@ if __name__ == '__main__':
     start1 = time.time()
     pts, desc, heatmap = fe.run(img)
     end1 = time.time()
+
+    if opt.save_matches:
+      # Get latest matches.
+      frame_matches_file = image_file + '.csv'
+      print(frame_matches_file)
+      m = tracker.get_latest_matches()
+      np.savetxt(frame_matches_file, m, fmt='%d', delimiter=',')
 
     # Add points and descriptors to the tracker.
     tracker.update(pts, desc)
