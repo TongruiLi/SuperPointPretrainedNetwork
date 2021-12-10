@@ -52,6 +52,7 @@ import time
 
 import cv2
 import torch
+import pickle
 
 # Stub to warn about opencv version.
 if int(cv2.__version__[0]) < 3: # pragma: no cover
@@ -73,6 +74,8 @@ def sort_listing(l):
   """
   sort the current listing of files
   """
+  l.sort()
+  return l
   print(l)
   exit(0)
   
@@ -316,9 +319,8 @@ class PointTracker(object):
   def nn_match_two_way(self, desc1, desc2, nn_thresh):
     """
     Performs two-way nearest neighbor matching of two sets of descriptors, such
-    that the NN match from descriptor A->B must equal the NN match from B->A.
+    that the NN match     print(status)
 
-    Inputs:
       desc1 - NxM numpy matrix of N corresponding M-dimensional descriptors.
       desc2 - NxM numpy matrix of N corresponding M-dimensional descriptors.
       nn_thresh - Optional descriptor distance below which is a good match.
@@ -491,6 +493,41 @@ class PointTracker(object):
           clr2 = (255, 0, 0)
           cv2.circle(out, p2, stroke, clr2, -1, lineType=16)
 
+  def get_latest_matches(self):
+    """ Get the feature point matches between the latest frame and the previous
+        frame.
+    Inputs
+      None.
+    Output 
+      An Mx5 numpy array, for M feature matches, with the pixel coordinates of 
+      the features from the latest frame, and the previous frame in the order
+      [track_id, x1, y1, x2, y2]'
+    """
+    # Store the number of points per camera.
+    pts_mem = self.all_pts
+    N = len(pts_mem) # Number of cameras/images.
+    # Get offset ids needed to reference into pts_mem.
+    offsets = self.get_offsets()
+    matches = np.zeros((0, 5))
+    i = N - 2
+    offset1 = offsets[i]
+    offset2 = offsets[i+1]
+    for track in self.tracks:
+      if track[i+2] == -1 or track[i+3] == -1:
+        continue
+      track_id = track[0]
+      idx1 = int(track[i+2]-offset1)
+      idx2 = int(track[i+3]-offset2)
+      pt1 = pts_mem[i][:2, idx1]
+      pt2 = pts_mem[i+1][:2, idx2]
+      #p1 = (int(round(pt1[0])), int(round(pt1[1])))
+      #p2 = (int(round(pt2[0])), int(round(pt2[1])))
+      match = np.concatenate((np.array([track_id]), pt1, pt2))
+      matches = np.vstack((matches, match))
+    # print(matches.astype(int))
+    # time.sleep(1)
+    return matches
+
 class VideoStreamer(object):
   """ Class to help process image streams. Three types of possible inputs:"
     1.) USB Webcam.
@@ -562,7 +599,7 @@ class VideoStreamer(object):
        status: True or False depending whether image was loaded.
     """
     if self.i == self.maxlen:
-      return (None, False)
+      return (None, False, "")
     if self.camera:
       ret, input_image = self.cap.read()
       if ret is False:
@@ -580,7 +617,9 @@ class VideoStreamer(object):
     # Increment internal counter.
     self.i = self.i + 1
     input_image = input_image.astype('float32')
-    return (input_image, True)
+    assert image_file is not None, "image file does not exist!"
+    image_file = os.path.basename(image_file)[:-4]
+    return (input_image, True, image_file)
 
 
 if __name__ == '__main__':
@@ -589,24 +628,24 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='PyTorch SuperPoint Demo.')
   parser.add_argument('input', type=str, default='',
       help='Image directory or movie file or "camera" (for webcam).')
-  parser.add_argument('--weights_path', type=str, default='superpoint_v1.pth',
+  parser.add_argument('--weights_path', type=str, default='SuperPointPretrainedNetwork/superpoint_v1.pth',
       help='Path to pretrained weights file (default: superpoint_v1.pth).')
-  parser.add_argument('--img_glob', type=str, default='*.png',
+  parser.add_argument('--img_glob', type=str, default='*.jpg',
       help='Glob match if directory of images is specified (default: \'*.png\').')
   parser.add_argument('--skip', type=int, default=1,
       help='Images to skip if input is movie or directory (default: 1).')
   parser.add_argument('--show_extra', action='store_true',
       help='Show extra debug outputs (default: False).')
-  parser.add_argument('--H', type=int, default=120,
-      help='Input image height (default: 120).')
-  parser.add_argument('--W', type=int, default=160,
-      help='Input image width (default:160).')
-  parser.add_argument('--display_scale', type=int, default=2,
-      help='Factor to scale output visualization (default: 2).')
+  parser.add_argument('--H', type=int, default=192,
+      help='Input image height (default: 192).')
+  parser.add_argument('--W', type=int, default=384,
+      help='Input image width (default:384).')
+  parser.add_argument('--display_scale', type=int, default=5,
+      help='Factor to scale output visualization (default: 5.)')
   parser.add_argument('--min_length', type=int, default=2,
       help='Minimum length of point tracks (default: 2).')
-  parser.add_argument('--max_length', type=int, default=5,
-      help='Maximum length of point tracks (default: 5).')
+  parser.add_argument('--max_length', type=int, default=10,
+      help='Maximum length of point tracks (default: 10).')
   parser.add_argument('--nms_dist', type=int, default=4,
       help='Non Maximum Suppression (NMS) distance (default: 4).')
   parser.add_argument('--conf_thresh', type=float, default=0.015,
@@ -625,6 +664,9 @@ if __name__ == '__main__':
       help='Save output frames to a directory (default: False)')
   parser.add_argument('--write_dir', type=str, default='tracker_outputs/',
       help='Directory where to write output frames (default: tracker_outputs/).')
+  parser.add_argument("--save_matches", action="store_true")
+  parser.add_argument('--save_match_dir', type=str, default='save_match_dir/',
+      help='Directory where to save the interest point correspondence.')
   opt = parser.parse_args()
   print(opt)
 
@@ -662,13 +704,18 @@ if __name__ == '__main__':
     if not os.path.exists(opt.write_dir):
       os.makedirs(opt.write_dir)
 
+  # create save match directory
+  if opt.save_matches:
+    print('==> Will save matches to %s' % opt.save_match_dir)
+    if not os.path.exists(opt.save_match_dir):
+      os.makedirs(opt.save_match_dir)
   print('==> Running Demo.')
   while True:
 
     start = time.time()
 
     # Get a new image.
-    img, status = vs.next_frame()
+    img, status, image_file = vs.next_frame()
     if status is False:
       break
 
@@ -679,11 +726,15 @@ if __name__ == '__main__':
 
     if opt.save_matches:
       # Get latest matches.
-      frame_matches_file = image_file + '.csv'
+      frame_matches_file = image_file + '.p'
       print(frame_matches_file)
       m = tracker.get_latest_matches()
-      np.savetxt(frame_matches_file, m, fmt='%d', delimiter=',')
-
+      #print(m)
+      # Save matches to file.
+      with open(os.path.join(opt.save_match_dir, frame_matches_file), 'wb') as f:
+        pickle.dump(m, f)
+      #np.savetxt(frame_matches_file, m, fmt='%d', delimiter=',')
+      #exit(0)
     # Add points and descriptors to the tracker.
     tracker.update(pts, desc)
 
