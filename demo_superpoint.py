@@ -70,14 +70,26 @@ myjet = np.array([[0.        , 0.        , 0.5       ],
                   [0.99910873, 0.07334786, 0.        ],
                   [0.5       , 0.        , 0.        ]])
 
-def sort_listing(l):
+def sort_listing(basedir, l):
   """
-  sort the current listing of files
+  sort the current listing of files according to file_list.txt
   """
-  l.sort()
-  return l
-  print(l)
-  exit(0)
+  # get the file_list.txt
+  file_list = os.path.join(basedir, 'file_list.txt')
+  assert os.path.exists(file_list), "Error: file_list.txt does not exist! Please parse data first"
+  with open(file_list, 'r') as f:
+    file_list = [x.strip() for x in f.readlines()]
+  # revert image name to without path
+  l = [os.path.basename(x.strip()) for x in l]
+  l = frozenset(l)
+  new_list = []
+  for fn in file_list:
+    if fn in l:
+      new_list.append(os.path.join(basedir, fn))
+    else:
+      raise Exception("Error: file_list.txt does not match the current directory listing")
+  assert len(l) == len(new_list), "Error: file_list.txt does not match the current directory listing"
+  return new_list
   
 class SuperPointNet(torch.nn.Module):
   """ Pytorch definition of SuperPoint Network. """
@@ -568,7 +580,7 @@ class VideoStreamer(object):
         search = os.path.join(basedir, img_glob)
         self.listing = glob.glob(search)
         #self.listing.sort()
-        self.listing = sort_listing(self.listing)
+        self.listing = sort_listing(basedir, self.listing)
 
         self.listing = self.listing[::self.skip]
         self.maxlen = len(self.listing)
@@ -727,11 +739,13 @@ if __name__ == '__main__':
     if opt.save_matches:
       # Get latest matches.
       frame_matches_file = image_file + '.p'
-      print(frame_matches_file)
+      #print(frame_matches_file)
       m = tracker.get_latest_matches()
       #print(m)
       # Save matches to file.
-      with open(os.path.join(opt.save_match_dir, frame_matches_file), 'wb') as f:
+      fn = os.path.join(opt.save_match_dir, frame_matches_file)
+      assert not os.path.exists(fn), "Fatal: File already exists"
+      with open(fn, 'wb') as f:
         pickle.dump(m, f)
       #np.savetxt(frame_matches_file, m, fmt='%d', delimiter=',')
       #exit(0)
